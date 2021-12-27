@@ -11,6 +11,7 @@ import { bv2av, extractAvNumber, extractBv, isBv } from './util/av-bv';
 import { useDispatch, useSelector } from 'react-redux';
 import { Cmd, Loop, loop, WithDefaultActionHandling } from 'redux-loop';
 import { Dispatch } from 'redux';
+import { DragDropContext, Draggable, Droppable, DropResult } from 'react-beautiful-dnd';
 
 
 const PLAYLIST_KEY = 'playlist';
@@ -39,6 +40,14 @@ const initAppState: AppState =  {
 
 // Actions //
 
+function reorder<T>(list: T[], startIndex: number, endIndex: number) {
+  const result = Array.from(list);
+  const [removed] = result.splice(startIndex, 1);
+  result.splice(endIndex, 0, removed);
+
+  return result;
+};
+
 export type AppAction = WithDefaultActionHandling<{
   type: 'remove' | 'select' | 'doAdd' | 'doSelect';
   payload: string;
@@ -50,6 +59,10 @@ export type AppAction = WithDefaultActionHandling<{
 {
   type: 'updateLoopMode',
   payload: LoopMode,
+} | 
+{
+  type: 'reorder',
+  payload: [ number, number ],
 }
 >;
 
@@ -59,6 +72,7 @@ const actions = {
   remove: (vid: string) => ({ type: 'remove' as const, payload: vid }),
   doAdd: (vid: string) => ({ type: 'doAdd' as const, payload: vid }),
   updateLoopMode: (loopMode: LoopMode) => ({ type: 'updateLoopMode' as const, payload: loopMode }),
+  reorder: (startIndex: number, endIndex: number) => ({ type: 'reorder', payload: [startIndex, endIndex] }),
 };
 
 
@@ -150,6 +164,18 @@ export function appReducer(state: AppState = initAppState, action: AppAction): A
         nextStateAfterUpdateLoopMode,
         Cmd.run(playlistControl.update, { args: [nextStateAfterUpdateLoopMode, Cmd.dispatch as any] })
       );
+    case 'reorder':
+      const nextStateAfterReorder = produce(state, draft => {
+        draft.playlist = reorder(draft.playlist, action.payload[0], action.payload[1]);
+      });
+
+      return loop(
+        nextStateAfterReorder,
+        Cmd.list([
+          Cmd.run(playlistControl.update, { args: [nextStateAfterReorder, Cmd.dispatch as any] }),
+          Cmd.run(pushLocalStorage, { args: [nextStateAfterReorder] }),
+        ]),
+      );
     case 'select':
       const nextStateAfterSelect = produce(state, draft => {
         draft.selectedVid = action.payload;
@@ -190,6 +216,14 @@ function App() {
   // Intermediate States //
   const [ vidInput, setVid ] = useState('');
 
+  const handleDragEnd = (result: DropResult) => {
+    if (!result.destination) {
+      return;
+    }
+
+    dispatch(actions.reorder(result.source.index, result.destination.index));
+  }
+
   return (
     <div className="App">
       <TextField
@@ -206,26 +240,37 @@ function App() {
         <ToggleButton value="NONE">None</ToggleButton>
       </ToggleButtonGroup>
 
-      <List>
-        {state.playlist.map(item => <ListItem key={item.avId} onClick={state.selectedVid === item.avId ? undefined : () => dispatch(actions.doSelect(item.avId))}
-          secondaryAction={
-            <IconButton edge="end" aria-label="delete" onClick={(ev) => {
-              ev.stopPropagation();
-              dispatch(actions.remove(item.avId));
-            }}>
-              <DeleteIcon />
-            </IconButton>
-          }
-        >
-          <ListItemAvatar>
-            <Avatar alt="B"
-              // src={item.pic}
-            />
-          </ListItemAvatar>
+      <DragDropContext onDragEnd={handleDragEnd}>
+        <Droppable droppableId="playlist">
+          {(provided, snapshot) => <List {...provided.droppableProps} ref={provided.innerRef}>
+            {state.playlist.map((item, index) => <Draggable index={index} draggableId={item.avId} key={item.avId}>
+                {(provided, snapshot) => <ListItem
+                  {...provided.draggableProps}
+                  {...provided.dragHandleProps}
+                  ref={provided.innerRef}
+                  onClick={state.selectedVid === item.avId ? undefined : () => dispatch(actions.doSelect(item.avId))}
+                  secondaryAction={
+                    <IconButton edge="end" aria-label="delete" onClick={(ev) => {
+                      ev.stopPropagation();
+                      dispatch(actions.remove(item.avId));
+                    }}>
+                      <DeleteIcon />
+                    </IconButton>
+                  }
+                >
+                  <ListItemAvatar>
+                    <Avatar alt="B"
+                      // src={item.pic}
+                    />
+                  </ListItemAvatar>
 
-          <ListItemText primary={<span style={{ fontWeight: state.selectedVid !== item.avId ? undefined : 'bold' }}>{item.name}</span>} secondary={item.avId} />
-        </ListItem>)}
-      </List>
+                  <ListItemText primary={<span style={{ fontWeight: state.selectedVid !== item.avId ? undefined : 'bold' }}>{item.name}</span>} secondary={item.avId} />
+                </ListItem>}
+            </Draggable>)}
+
+          </List>}
+        </Droppable>
+      </DragDropContext>
     </div>
   );
 }
