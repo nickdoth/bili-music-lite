@@ -19,9 +19,16 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "downlevelIteration": true
+    "downlevelIteration": true,
+    "typeRoots": [
+      "typings",
+      "node_modules/@types"
+    ],
   },
   "include": [
     "src"
+  ],
+  "files": [
+    "src/typings/react-redux.d.ts"
   ]
 }
