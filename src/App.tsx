@@ -3,7 +3,6 @@ import { useState } from 'react';
 import TextField from '@mui/material/TextField';
 import { linkChangeState } from './util/mui';
 import Button from '@mui/material/Button';
-import { playMain, videoElm } from './effects/audio';
 import produce from 'immer';
 import { Avatar, IconButton, List, ListItem, ListItemAvatar, ListItemText, ToggleButton, ToggleButtonGroup } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -13,8 +12,11 @@ import { Cmd, Loop, loop, WithDefaultActionHandling } from 'redux-loop';
 import { Dispatch } from 'redux';
 import { DragDropContext, Draggable, Droppable, DropResult } from 'react-beautiful-dnd';
 
+import { useEffect } from 'react';
+
 
 const PLAYLIST_KEY = 'playlist';
+const LOOP_MODE_KEY = 'loopMode';
 
 // State //
 
@@ -35,7 +37,7 @@ interface AppState {
 const initAppState: AppState =  {
   playlist: JSON.parse(localStorage.getItem(PLAYLIST_KEY) ?? '[]'),
   selectedVid: 'na',
-  loopMode: 'LIST',
+  loopMode: localStorage.getItem(LOOP_MODE_KEY) as LoopMode || 'LIST',
 };
 
 // Actions //
@@ -63,6 +65,10 @@ export type AppAction = WithDefaultActionHandling<{
 {
   type: 'reorder',
   payload: [ number, number ],
+} |
+{
+  type: 'initPlayer',
+  payload: string,
 }
 >;
 
@@ -72,41 +78,58 @@ const actions = {
   remove: (vid: string) => ({ type: 'remove' as const, payload: vid }),
   doAdd: (vid: string) => ({ type: 'doAdd' as const, payload: vid }),
   updateLoopMode: (loopMode: LoopMode) => ({ type: 'updateLoopMode' as const, payload: loopMode }),
-  reorder: (startIndex: number, endIndex: number) => ({ type: 'reorder', payload: [startIndex, endIndex] }),
+  reorder: (startIndex: number, endIndex: number) => ({ type: 'reorder' as const, payload: [startIndex, endIndex] }),
+  initPlayer: (elemId: string) => ({ type: 'initPlayer' as const, payload: elemId }),
 };
 
 
 // Side Effects //
-const play = async (_vidInput: string) => {
-    
-  console.log(extractAvNumber(_vidInput));
-  const avNumber = extractAvNumber(_vidInput);
-  let playRes: any;
-  if (avNumber) {
-    playRes = await playMain(avNumber);
-  } else if (isBv(_vidInput)) {
-    playRes = await playMain(extractAvNumber(bv2av(extractBv(_vidInput)!))!);
-  }
-
-  const vid = playRes.bvid || playRes.avid;
-  playRes.vid = vid;
-
-  window.document.title = `${playRes.title} - BILI MUSIC`
-
-  return playRes;
-};
-
 const pushLocalStorage = (state: AppState) => {
   localStorage.setItem(PLAYLIST_KEY, JSON.stringify(state.playlist));
+  localStorage.setItem(LOOP_MODE_KEY, state.loopMode);
 }
 
-const playlistControl = (() => {
+const playerController = (() => {
   let listener: (() => void) | null = null;
+  let mediaElm: HTMLAudioElement | null = null;
+
+  const SERVER = 'https://bili-music.hk.cn2.nickdoth.cc';
+
+  async function playMain(avid: string) {
+    let res = await fetch(`${SERVER}/playurl/av${avid}`).then(res => res.json());
+    const { aurl } = res;
+    mediaElm!.src = aurl;
+
+    return res;
+  }
+
+  const play = async (_vidInput: string) => {
+    
+    console.log(extractAvNumber(_vidInput));
+    const avNumber = extractAvNumber(_vidInput);
+    let playRes: any;
+    if (avNumber) {
+      playRes = await playMain(avNumber);
+    } else if (isBv(_vidInput)) {
+      playRes = await playMain(extractAvNumber(bv2av(extractBv(_vidInput)!))!);
+    }
+  
+    const vid = playRes.bvid || playRes.avid;
+    playRes.vid = vid;
+  
+    window.document.title = `${playRes.title} - BILI MUSIC`
+  
+    return playRes;
+  };
 
   return {
-    update: (state: AppState, dispatch: Dispatch) => {
+    play,
+    initPlayer: (elemId: string) => {
+      mediaElm = document.getElementById(elemId) as HTMLAudioElement;
+    },
+    updateState: (state: AppState, dispatch: Dispatch) => {
       if (listener) {
-        videoElm.removeEventListener('ended', listener);
+        mediaElm?.removeEventListener('ended', listener);
       }
       listener = () => {
         const currentIdx = state.playlist.findIndex(item => item.avId === state.selectedVid);
@@ -127,7 +150,7 @@ const playlistControl = (() => {
             break;
         }
       };
-      videoElm.addEventListener('ended', listener);
+      mediaElm?.addEventListener('ended', listener);
     },
   }
 })();
@@ -162,7 +185,10 @@ export function appReducer(state: AppState = initAppState, action: AppAction): A
       });
       return loop(
         nextStateAfterUpdateLoopMode,
-        Cmd.run(playlistControl.update, { args: [nextStateAfterUpdateLoopMode, Cmd.dispatch as any] })
+        Cmd.list([
+          Cmd.run(playerController.updateState, { args: [nextStateAfterUpdateLoopMode, Cmd.dispatch as any] }),
+          Cmd.run(pushLocalStorage, { args: [nextStateAfterUpdateLoopMode] }),
+        ]),
       );
     case 'reorder':
       const nextStateAfterReorder = produce(state, draft => {
@@ -172,7 +198,7 @@ export function appReducer(state: AppState = initAppState, action: AppAction): A
       return loop(
         nextStateAfterReorder,
         Cmd.list([
-          Cmd.run(playlistControl.update, { args: [nextStateAfterReorder, Cmd.dispatch as any] }),
+          Cmd.run(playerController.updateState, { args: [nextStateAfterReorder, Cmd.dispatch as any] }),
           Cmd.run(pushLocalStorage, { args: [nextStateAfterReorder] }),
         ]),
       );
@@ -182,20 +208,20 @@ export function appReducer(state: AppState = initAppState, action: AppAction): A
       });
       return loop(
         nextStateAfterSelect,
-        Cmd.run(playlistControl.update, { args: [nextStateAfterSelect, Cmd.dispatch as any] })
+        Cmd.run(playerController.updateState, { args: [nextStateAfterSelect, Cmd.dispatch as any] })
       );
     case 'doSelect':
       return loop(
         state,
         Cmd.list([
-          Cmd.run(play, { args: [action.payload] }),
+          Cmd.run(playerController.play, { args: [action.payload] }),
           Cmd.action({ type: 'select', payload: action.payload }),
         ]),
       );
     case 'doAdd':
       return loop(
         state,
-        Cmd.run(play, {
+        Cmd.run(playerController.play, {
           args: [action.payload],
           successActionCreator: (playRes: any) => ({
             type: 'add', 
@@ -203,6 +229,14 @@ export function appReducer(state: AppState = initAppState, action: AppAction): A
           })
         })
       );
+    case 'initPlayer':
+      return loop(
+        state,
+        Cmd.list([
+          Cmd.run(playerController.initPlayer, { args: [action.payload] }),
+          Cmd.run(playerController.updateState, { args: [state, Cmd.dispatch as any] }),
+        ], { sequence: true }),
+      )
     default:
       return state;
   }
@@ -212,6 +246,10 @@ function App() {
   // App State //
   const state = useSelector(state => state.app);
   const dispatch = useDispatch();
+
+  useEffect(() => {
+    dispatch(actions.initPlayer('meida-elm'));
+  }, [ dispatch ]);
 
   // Intermediate States //
   const [ vidInput, setVid ] = useState('');
@@ -225,54 +263,103 @@ function App() {
   }
 
   return (
-    <div className="App">
-      <TextField
-        onChange={linkChangeState(setVid)}
-        value={vidInput}
-        label={'Search by Av/Bv'}
-      />
+    <div style={styles.App}>
+      <div style={styles.Playlist}>
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <Droppable droppableId="playlist">
+            {(provided, snapshot) => <List {...provided.droppableProps} ref={provided.innerRef} style={{ ...styles.PlaylistInner }}>
+              {state.playlist.map((item, index) => <Draggable index={index} draggableId={item.avId} key={item.avId}>
+                  {(provided, snapshot) => <ListItem
+                    {...provided.draggableProps}
+                    {...provided.dragHandleProps}
+                    style={{ ...provided.draggableProps.style, width: '100%' }}
+                    ref={provided.innerRef}
+                    onClick={state.selectedVid === item.avId ? undefined : () => dispatch(actions.doSelect(item.avId))}
+                    secondaryAction={
+                      <IconButton edge="end" aria-label="delete" onClick={(ev) => {
+                        ev.stopPropagation();
+                        dispatch(actions.remove(item.avId));
+                      }}>
+                        <DeleteIcon />
+                      </IconButton>
+                    }
+                  >
+                    <ListItemAvatar>
+                      <Avatar alt="B"
+                        // src={item.pic}
+                      />
+                    </ListItemAvatar>
 
-      <Button onClick={() => dispatch(actions.doAdd(vidInput))}>Play Music</Button>
+                    <ListItemText primary={<span style={{ fontWeight: state.selectedVid !== item.avId ? undefined : 'bold' }}>{item.name}</span>} secondary={item.avId} />
+                  </ListItem>}
+              </Draggable>)}
 
-      <ToggleButtonGroup exclusive value={state.loopMode} onChange={(_ev, newVal) => dispatch(actions.updateLoopMode(newVal))}>
-        <ToggleButton value="LIST">List</ToggleButton>
-        <ToggleButton value="SINGLE">Single</ToggleButton>
-        <ToggleButton value="NONE">None</ToggleButton>
-      </ToggleButtonGroup>
+            </List>}
+          </Droppable>
+        </DragDropContext>
+      </div>
 
-      <DragDropContext onDragEnd={handleDragEnd}>
-        <Droppable droppableId="playlist">
-          {(provided, snapshot) => <List {...provided.droppableProps} ref={provided.innerRef}>
-            {state.playlist.map((item, index) => <Draggable index={index} draggableId={item.avId} key={item.avId}>
-                {(provided, snapshot) => <ListItem
-                  {...provided.draggableProps}
-                  {...provided.dragHandleProps}
-                  ref={provided.innerRef}
-                  onClick={state.selectedVid === item.avId ? undefined : () => dispatch(actions.doSelect(item.avId))}
-                  secondaryAction={
-                    <IconButton edge="end" aria-label="delete" onClick={(ev) => {
-                      ev.stopPropagation();
-                      dispatch(actions.remove(item.avId));
-                    }}>
-                      <DeleteIcon />
-                    </IconButton>
-                  }
-                >
-                  <ListItemAvatar>
-                    <Avatar alt="B"
-                      // src={item.pic}
-                    />
-                  </ListItemAvatar>
+      <div style={styles.Controls}>
 
-                  <ListItemText primary={<span style={{ fontWeight: state.selectedVid !== item.avId ? undefined : 'bold' }}>{item.name}</span>} secondary={item.avId} />
-                </ListItem>}
-            </Draggable>)}
+        <div style={styles.ControlRow}>
+          <TextField
+            onChange={linkChangeState(setVid)}
+            value={vidInput}
+            label={'Av/Bv ID'}
+            variant="filled"
+            fullWidth
+          />
 
-          </List>}
-        </Droppable>
-      </DragDropContext>
+          <Button onClick={() => dispatch(actions.doAdd(vidInput))}>Add</Button>
+        </div>
+
+        <div style={styles.ControlRow}>
+          <ToggleButtonGroup exclusive value={state.loopMode} onChange={(_ev, newVal) => dispatch(actions.updateLoopMode(newVal))}>
+            <ToggleButton value="LIST">List</ToggleButton>
+            <ToggleButton value="SINGLE">Single</ToggleButton>
+            <ToggleButton value="NONE">None</ToggleButton>
+          </ToggleButtonGroup>
+
+          <audio id="meida-elm" controls autoPlay />
+        </div>
+      </div>
+      
     </div>
   );
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  App: {
+    display: 'flex',
+    height: '100vh',
+    width: '100%',
+    flexDirection: 'column',
+  },
+  Controls: {
+    display: 'flex',
+    flexDirection: 'column',
+    width: '100%',
+
+    position: 'sticky',
+    bottom: 0,
+  
+    background: '#fdfdfd',
+    zIndex: 10,
+  },
+
+  Playlist: {
+    position: 'relative',
+    overflow: 'auto',
+    flexGrow: 1,
+    width: '100%',
+  },
+
+  PlaylistInner: {
+    position: 'absolute',
+    width: '100%',
+  },
+
+  ControlRow: { display: 'flex', justifyContent: 'center' },
 }
 
 export default App;
