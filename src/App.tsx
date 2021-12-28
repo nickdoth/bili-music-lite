@@ -13,6 +13,8 @@ import { Dispatch } from 'redux';
 import { DragDropContext, Draggable, Droppable, DropResult } from 'react-beautiful-dnd';
 
 import { useEffect } from 'react';
+import styled from 'styled-components';
+import SwipeableViews from 'react-swipeable-views';
 
 
 const PLAYLIST_KEY = 'playlist';
@@ -90,7 +92,9 @@ const pushLocalStorage = (state: AppState) => {
 }
 
 const playerController = (() => {
-  let listener: (() => void) | null = null;
+  let onEndedListener: (() => void) | null = null;
+  let onErrorListener: (() => void) | null = null;
+  let onErrorRetryTimer: any = null;
   let mediaElm: HTMLAudioElement | null = null;
 
   const SERVER = 'https://bili-music.hk.cn2.nickdoth.cc';
@@ -128,10 +132,26 @@ const playerController = (() => {
       mediaElm = document.getElementById(elemId) as HTMLAudioElement;
     },
     updateState: (state: AppState, dispatch: Dispatch) => {
-      if (listener) {
-        mediaElm?.removeEventListener('ended', listener);
+      if (onEndedListener) {
+        mediaElm?.removeEventListener('ended', onEndedListener);
       }
-      listener = () => {
+
+      if (onErrorListener) {
+        mediaElm?.removeEventListener('error', onErrorListener);
+      }
+
+      if (onErrorRetryTimer) {
+        clearTimeout(onErrorRetryTimer);
+        onErrorRetryTimer = null;
+      }
+
+      if (state.loopMode === 'SINGLE') {
+        mediaElm && (mediaElm.loop = true);
+      } else {
+        mediaElm && (mediaElm.loop = false);
+      }
+
+      onEndedListener = () => {
         const currentIdx = state.playlist.findIndex(item => item.avId === state.selectedVid);
         switch (state.loopMode) {
           case 'LIST':
@@ -144,13 +164,18 @@ const playerController = (() => {
             }
             break;
           case 'SINGLE':
-            dispatch(actions.doSelect(state.playlist[currentIdx].avId));
-            break;
+          // fall through
           case 'NONE':
             break;
         }
       };
-      mediaElm?.addEventListener('ended', listener);
+      mediaElm?.addEventListener('ended', onEndedListener);
+
+      onErrorListener = () => onErrorRetryTimer = setTimeout(() => {
+        const currentIdx = state.playlist.findIndex(item => item.avId === state.selectedVid);
+        dispatch(actions.doSelect(state.playlist[currentIdx].avId));
+      }, 1000);
+      mediaElm?.addEventListener('error', onErrorListener);
     },
   }
 })();
@@ -263,102 +288,115 @@ function App() {
   }
 
   return (
-    <div style={styles.App}>
-      <div style={styles.Playlist}>
-        <DragDropContext onDragEnd={handleDragEnd}>
-          <Droppable droppableId="playlist">
-            {(provided, snapshot) => <List {...provided.droppableProps} ref={provided.innerRef} style={{ ...styles.PlaylistInner }}>
-              {state.playlist.map((item, index) => <Draggable index={index} draggableId={item.avId} key={item.avId}>
-                {(provided, snapshot) => <ListItem
-                  {...provided.draggableProps}
-                  style={{ ...provided.draggableProps.style, width: '100%' }}
-                  ref={provided.innerRef}
-                  onClick={state.selectedVid === item.avId ? undefined : () => dispatch(actions.doSelect(item.avId))}
-                  secondaryAction={
-                    <IconButton edge="end" aria-label="delete" onClick={(ev) => {
-                      ev.stopPropagation();
-                      dispatch(actions.remove(item.avId));
-                    }}>
-                      <DeleteIcon />
-                    </IconButton>
-                  }
-                >
-                  <ListItemAvatar {...provided.dragHandleProps}>
-                    <Avatar alt="B"
-                    // src={item.pic}
-                    />
-                  </ListItemAvatar>
+    <MainPage>
+      <SwipeableViews enableMouseEvents disableLazyLoading containerStyle={{ height: '100%' }} style={{ height: '100%' }} >
+        <Playlist>
+          <DragDropContext onDragEnd={handleDragEnd}>
+            <Droppable droppableId="playlist">
+              {(provided, snapshot) => <List {...provided.droppableProps} ref={provided.innerRef} className='inner'>
+                {state.playlist.map((item, index) => <Draggable index={index} draggableId={item.avId} key={item.avId}>
+                  {(provided, snapshot) => <ListItem
+                    {...provided.draggableProps}
+                    style={{ ...provided.draggableProps.style, width: '100%' }}
+                    ref={provided.innerRef}
+                    onClick={state.selectedVid === item.avId ? undefined : () => dispatch(actions.doSelect(item.avId))}
+                    secondaryAction={
+                      <IconButton edge="end" aria-label="delete" onClick={(ev) => {
+                        ev.stopPropagation();
+                        dispatch(actions.remove(item.avId));
+                      }}>
+                        <DeleteIcon />
+                      </IconButton>
+                    }
+                  >
+                    <ListItemAvatar {...provided.dragHandleProps}>
+                      <Avatar alt="B"
+                      // src={item.pic}
+                      />
+                    </ListItemAvatar>
 
-                  <ListItemText primary={<span style={{ fontWeight: state.selectedVid !== item.avId ? undefined : 'bold' }}>{item.name}</span>} secondary={item.avId} />
-                </ListItem>}
-              </Draggable>)}
+                    <ListItemText primary={<span style={{ fontWeight: state.selectedVid !== item.avId ? undefined : 'bold' }}>{item.name}</span>} secondary={item.avId} />
+                  </ListItem>}
+                </Draggable>)}
 
-            </List>}
-          </Droppable>
-        </DragDropContext>
-      </div>
+              </List>}
+            </Droppable>
+          </DragDropContext>
+        </Playlist>
 
-      <div style={styles.Controls}>
+        <Controls>
 
-        <div style={styles.ControlRow}>
-          <TextField
-            onChange={linkChangeState(setVid)}
-            value={vidInput}
-            label={'Av/Bv ID'}
-            variant="filled"
-            fullWidth
-          />
+          <ControlRow>
+            <TextField
+              onChange={linkChangeState(setVid)}
+              value={vidInput}
+              label={'Av/Bv ID'}
+              variant="filled"
+              fullWidth
+            />
 
-          <Button onClick={() => dispatch(actions.doAdd(vidInput))}>Add</Button>
-        </div>
+            <Button onClick={() => dispatch(actions.doAdd(vidInput))}>Add</Button>
+          </ControlRow>
 
-        <div style={styles.ControlRow}>
-          <ToggleButtonGroup exclusive value={state.loopMode} onChange={(_ev, newVal) => dispatch(actions.updateLoopMode(newVal))}>
-            <ToggleButton value="LIST">List</ToggleButton>
-            <ToggleButton value="SINGLE">Single</ToggleButton>
-            <ToggleButton value="NONE">None</ToggleButton>
-          </ToggleButtonGroup>
+          <ControlRow>
+            <ToggleButtonGroup exclusive value={state.loopMode} onChange={(_ev, newVal) => dispatch(actions.updateLoopMode(newVal))}>
+              <ToggleButton value="LIST">List</ToggleButton>
+              <ToggleButton value="SINGLE">Single</ToggleButton>
+              <ToggleButton value="NONE">None</ToggleButton>
+            </ToggleButtonGroup>
+          </ControlRow>
 
-          <audio id="meida-elm" controls autoPlay />
-        </div>
-      </div>
 
-    </div>
+        </Controls>
+      </SwipeableViews>
+
+      <ControlRow>
+        <audio id="meida-elm" controls autoPlay />
+      </ControlRow>
+
+
+
+    </MainPage>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  App: {
-    display: 'flex',
-    height: '100vh',
-    width: '100%',
-    flexDirection: 'column',
-  },
-  Controls: {
-    display: 'flex',
-    flexDirection: 'column',
-    width: '100%',
+const MainPage = styled.div`
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  flex-direction: column;
+`;
 
-    position: 'sticky',
-    bottom: 0,
+const Controls = styled.div`
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  justify-content: space-between;
+  align-items: center;
 
-    background: '#fdfdfd',
-    zIndex: 10,
-  },
 
-  Playlist: {
-    position: 'relative',
-    overflow: 'auto',
-    flexGrow: 1,
-    width: '100%',
-  },
+  padding: 4rem 0;
 
-  PlaylistInner: {
-    position: 'absolute',
-    width: '100%',
-  },
+  background: #fdfdfd;
+`;
 
-  ControlRow: { display: 'flex', justifyContent: 'center' },
-}
+const Playlist = styled.div`
+  position: relative;
+  overflow: auto;
+  flex-grow: 1;
+  width: 100%;
+  height: 100%;
+
+  .inner {
+    position: absolute;
+    width: 100%;
+  }
+`;
+
+const ControlRow = styled.div`
+  display: flex;
+  justify-content: center;
+`;
 
 export default App;
