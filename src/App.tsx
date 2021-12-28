@@ -34,7 +34,7 @@ interface AppState {
   loopMode: LoopMode;
 }
 
-const initAppState: AppState =  {
+const initAppState: AppState = {
   playlist: JSON.parse(localStorage.getItem(PLAYLIST_KEY) ?? '[]'),
   selectedVid: 'na',
   loopMode: localStorage.getItem(LOOP_MODE_KEY) as LoopMode || 'LIST',
@@ -61,10 +61,10 @@ export type AppAction = WithDefaultActionHandling<{
 {
   type: 'updateLoopMode',
   payload: LoopMode,
-} | 
+} |
 {
   type: 'reorder',
-  payload: [ number, number ],
+  payload: [number, number],
 } |
 {
   type: 'initPlayer',
@@ -104,7 +104,7 @@ const playerController = (() => {
   }
 
   const play = async (_vidInput: string) => {
-    
+
     console.log(extractAvNumber(_vidInput));
     const avNumber = extractAvNumber(_vidInput);
     let playRes: any;
@@ -113,12 +113,12 @@ const playerController = (() => {
     } else if (isBv(_vidInput)) {
       playRes = await playMain(extractAvNumber(bv2av(extractBv(_vidInput)!))!);
     }
-  
+
     const vid = playRes.bvid || playRes.avid;
     playRes.vid = vid;
-  
-    window.document.title = `${playRes.title} - BILI MUSIC`
-  
+
+    window.document.title = `${playRes.title} - BILI MUSIC`;
+
     return playRes;
   };
 
@@ -224,7 +224,7 @@ export function appReducer(state: AppState = initAppState, action: AppAction): A
         Cmd.run(playerController.play, {
           args: [action.payload],
           successActionCreator: (playRes: any) => ({
-            type: 'add', 
+            type: 'add',
             payload: { vid: playRes.vid, name: playRes.title, pic: playRes.pic },
           })
         })
@@ -249,10 +249,10 @@ function App() {
 
   useEffect(() => {
     dispatch(actions.initPlayer('meida-elm'));
-  }, [ dispatch ]);
+  }, [dispatch]);
 
   // Intermediate States //
-  const [ vidInput, setVid ] = useState('');
+  const [vidInput, setVid] = useState('');
 
   const handleDragEnd = (result: DropResult) => {
     if (!result.destination) {
@@ -269,29 +269,28 @@ function App() {
           <Droppable droppableId="playlist">
             {(provided, snapshot) => <List {...provided.droppableProps} ref={provided.innerRef} style={{ ...styles.PlaylistInner }}>
               {state.playlist.map((item, index) => <Draggable index={index} draggableId={item.avId} key={item.avId}>
-                  {(provided, snapshot) => <ListItem
-                    {...provided.draggableProps}
-                    {...provided.dragHandleProps}
-                    style={{ ...provided.draggableProps.style, width: '100%' }}
-                    ref={provided.innerRef}
-                    onClick={state.selectedVid === item.avId ? undefined : () => dispatch(actions.doSelect(item.avId))}
-                    secondaryAction={
-                      <IconButton edge="end" aria-label="delete" onClick={(ev) => {
-                        ev.stopPropagation();
-                        dispatch(actions.remove(item.avId));
-                      }}>
-                        <DeleteIcon />
-                      </IconButton>
-                    }
-                  >
-                    <ListItemAvatar>
-                      <Avatar alt="B"
-                        // src={item.pic}
-                      />
-                    </ListItemAvatar>
+                {(provided, snapshot) => <ListItem
+                  {...provided.draggableProps}
+                  style={{ ...provided.draggableProps.style, width: '100%' }}
+                  ref={provided.innerRef}
+                  onClick={state.selectedVid === item.avId ? undefined : () => dispatch(actions.doSelect(item.avId))}
+                  secondaryAction={
+                    <IconButton edge="end" aria-label="delete" onClick={(ev) => {
+                      ev.stopPropagation();
+                      dispatch(actions.remove(item.avId));
+                    }}>
+                      <DeleteIcon />
+                    </IconButton>
+                  }
+                >
+                  <ListItemAvatar {...provided.dragHandleProps}>
+                    <Avatar alt="B"
+                    // src={item.pic}
+                    />
+                  </ListItemAvatar>
 
-                    <ListItemText primary={<span style={{ fontWeight: state.selectedVid !== item.avId ? undefined : 'bold' }}>{item.name}</span>} secondary={item.avId} />
-                  </ListItem>}
+                  <ListItemText primary={<span style={{ fontWeight: state.selectedVid !== item.avId ? undefined : 'bold' }}>{item.name}</span>} secondary={item.avId} />
+                </ListItem>}
               </Draggable>)}
 
             </List>}
@@ -323,7 +322,7 @@ function App() {
           <audio id="meida-elm" controls autoPlay />
         </div>
       </div>
-      
+
     </div>
   );
 }
@@ -342,7 +341,7 @@ const styles: Record<string, React.CSSProperties> = {
 
     position: 'sticky',
     bottom: 0,
-  
+
     background: '#fdfdfd',
     zIndex: 10,
   },
